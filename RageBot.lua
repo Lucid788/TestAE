@@ -127,6 +127,7 @@ return function(Core, State)
         local lastStrategyTime = 0
         local cachedStrategy = "attack"
         local cachedSlingshot = false
+        local lastAttackFire = 0  -- 추가: 마지막 공격 FireServer 시간
         
         local function track(p)
             p.CharacterAdded:Connect(function()
@@ -185,11 +186,17 @@ return function(Core, State)
             local item = fighterReq.LocalFighter.EquippedItem
             if not item then return end
             
-            if now - lastTargetCheck > 0.2 then
+            if now - lastTargetCheck > 0.5 then
                 lastTargetCheck = now
+                local oldTarget = currentTarget
                 if not currentTarget or not isReadySpawn(currentTarget, lplr, spawnTimes) or (now - targetStartTime > 10) then
                     currentTarget = getClosestTarget(Players, lplr, spawnTimes)
                     targetStartTime = now
+                end
+                if currentTarget ~= oldTarget then
+                    cachedStrategy = getStrategy(currentTarget)
+                    cachedSlingshot = hasSlingshot(lplr)
+                    lastStrategyTime = now
                 end
             end
             
@@ -198,32 +205,29 @@ return function(Core, State)
                 return
             end
             
-            if now - lastStrategyTime > 0.3 then
-                lastStrategyTime = now
-                cachedStrategy = getStrategy(currentTarget)
-                cachedSlingshot = hasSlingshot(lplr)
-            end
-            
             if cachedStrategy == "wait" then return end
             
             if cachedSlingshot then
                 phase = "void"
                 applyVoidTeleport(hrp, State.rageVoidStrength)
-                local camCF = CFrame.lookAt(
-                    workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 100,
-                    workspace.CurrentCamera.CFrame.Position
-                )
-                local cameradata = {[utf8.char(1)] = {
-                    [utf8.char(0)] = utilReq:EncodeCFrame(workspace.CurrentCamera.CFrame),
-                    [utf8.char(1)] = utilReq:EncodeCFrame(camCF),
-                    [utf8.char(2)] = workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 50,
-                    [utf8.char(3)] = utilReq:EncodeCFrame(CFrame.new(workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 50))
-                }}
-                pcall(function()
-                    rs.Remotes.Replication.Fighter.UseItem:FireServer(
-                        item:Get("ObjectID"), enums:ToEnum("StartShooting"), cameradata, nil
+                if now - lastAttackFire > 0.1 then
+                    lastAttackFire = now
+                    local camCF = CFrame.lookAt(
+                        workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 100,
+                        workspace.CurrentCamera.CFrame.Position
                     )
-                end)
+                    local cameradata = {[utf8.char(1)] = {
+                        [utf8.char(0)] = utilReq:EncodeCFrame(workspace.CurrentCamera.CFrame),
+                        [utf8.char(1)] = utilReq:EncodeCFrame(camCF),
+                        [utf8.char(2)] = workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 50,
+                        [utf8.char(3)] = utilReq:EncodeCFrame(CFrame.new(workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 50))
+                    }}
+                    pcall(function()
+                        rs.Remotes.Replication.Fighter.UseItem:FireServer(
+                            item:Get("ObjectID"), enums:ToEnum("StartShooting"), cameradata, nil
+                        )
+                    end)
+                end
                 return
             end
             
@@ -233,6 +237,7 @@ return function(Core, State)
             elseif phase == "void" and (now - phaseStartTime > State.rageVoidTime) then
                 phase = "attack"
                 phaseStartTime = now
+                lastAttackFire = 0  -- 공격 시작 시 리셋
             end
             
             if phase == "attack" then
@@ -246,18 +251,22 @@ return function(Core, State)
                 
                 hrp.CFrame = CFrame.new(pos, targetHead.Position)
                 
-                local camCF = CFrame.lookAt(targetHead.Position + Vector3.new(0, 2, 0), targetHead.Position)
-                local cameradata = {[utf8.char(1)] = {
-                    [utf8.char(0)] = utilReq:EncodeCFrame(workspace.CurrentCamera.CFrame),
-                    [utf8.char(1)] = utilReq:EncodeCFrame(camCF),
-                    [utf8.char(2)] = targetHead,
-                    [utf8.char(3)] = utilReq:EncodeCFrame(targetHead.CFrame:ToObjectSpace(CFrame.new(targetHead.Position)))
-                }}
-                pcall(function()
-                    rs.Remotes.Replication.Fighter.UseItem:FireServer(
-                        item:Get("ObjectID"), enums:ToEnum("StartShooting"), cameradata, nil
-                    )
-                end)
+                -- 공격 FireServer를 한 번만 호출
+                if now - lastAttackFire > 0.1 then  -- 최소 0.1초 간격
+                    lastAttackFire = now
+                    local camCF = CFrame.lookAt(targetHead.Position + Vector3.new(0, 2, 0), targetHead.Position)
+                    local cameradata = {[utf8.char(1)] = {
+                        [utf8.char(0)] = utilReq:EncodeCFrame(workspace.CurrentCamera.CFrame),
+                        [utf8.char(1)] = utilReq:EncodeCFrame(camCF),
+                        [utf8.char(2)] = targetHead,
+                        [utf8.char(3)] = utilReq:EncodeCFrame(targetHead.CFrame:ToObjectSpace(CFrame.new(targetHead.Position)))
+                    }}
+                    pcall(function()
+                        rs.Remotes.Replication.Fighter.UseItem:FireServer(
+                            item:Get("ObjectID"), enums:ToEnum("StartShooting"), cameradata, nil
+                        )
+                    end)
+                end
             else
                 applyVoidTeleport(hrp, State.rageVoidStrength)
             end
